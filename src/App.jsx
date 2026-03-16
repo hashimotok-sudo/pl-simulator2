@@ -1,4 +1,9 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = "https://opgzdgegxajyhnahsgtb.supabase.co";
+const SUPABASE_KEY = "sb_publishable_fymlnnP0mL3c4kfxp10YfQ__fYbOTYW";
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // ════════════════════════════════════════════════════════════
 //  ユーティリティ
@@ -671,20 +676,23 @@ const isValidSave = (p) => {
   return firstMK && p[0].months[firstMK]?.scenarios != null;
 };
 
+const migrateData = (d) => {
+  d.products = d.products.map(p => ({
+    ...p,
+    months: Object.fromEntries(Object.entries(p.months).map(([k, m]) => [
+      k, m.actuals ? m : { ...m, actuals: makeMonthActuals() }
+    ]))
+  }));
+  return d;
+};
+
 const loadState = () => {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
     if (!s) return null;
     const d = JSON.parse(s);
     if (!isValidSave(d.products)) { localStorage.removeItem(STORAGE_KEY); return null; }
-    // マイグレーション: actualsフィールドが無い月に初期化
-    d.products = d.products.map(p => ({
-      ...p,
-      months: Object.fromEntries(Object.entries(p.months).map(([k, m]) => [
-        k, m.actuals ? m : { ...m, actuals: makeMonthActuals() }
-      ]))
-    }));
-    return d;
+    return migrateData(d);
   } catch { return null; }
 };
 const saveState = (data) => {
@@ -692,6 +700,30 @@ const saveState = (data) => {
     if (typeof localStorage === "undefined") return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify({...data, savedAt:new Date().toISOString()}));
   } catch {}
+};
+// Supabaseへの保存（非同期）
+const saveToSupabase = async (data) => {
+  try {
+    await supabase.from("pl_simulator_data").upsert({
+      id: "main",
+      data: data,
+      updated_at: new Date().toISOString()
+    });
+  } catch(e) { console.warn("Supabase save error:", e); }
+};
+// Supabaseからの読み込み（非同期）
+const loadFromSupabase = async () => {
+  try {
+    const { data, error } = await supabase
+      .from("pl_simulator_data")
+      .select("data")
+      .eq("id", "main")
+      .single();
+    if (error || !data) return null;
+    const d = data.data;
+    if (!isValidSave(d.products)) return null;
+    return migrateData(d);
+  } catch(e) { console.warn("Supabase load error:", e); return null; }
 };
 
 // ════════════════════════════════════════════════════════════
@@ -1852,14 +1884,36 @@ export default function App() {
   const [showAddProduct,   setShowAddProduct]   = useState(false);
   const [showAddScenario,  setShowAddScenario]  = useState(false);
   const [savedAt,          setSavedAt]          = useState(saved?.savedAt ?? null);
+  const [syncing,          setSyncing]          = useState(false);
 
   const monthsInRange = useMemo(()=>getMonthsInRange(startYear,startMonth,endYear,endMonth),[startYear,startMonth,endYear,endMonth]);
+
+  // 起動時にSupabaseからデータを読み込む
+  useEffect(()=>{
+    (async()=>{
+      setSyncing(true);
+      const remote = await loadFromSupabase();
+      if(remote){
+        setProducts(remote.products);
+        setActiveId(remote.activeId ?? INITIAL_PRODUCTS[0].id);
+        setStartYear(remote.startYear ?? today.getFullYear());
+        setStartMonth(remote.startMonth ?? today.getMonth());
+        setEndYear(remote.endYear ?? today.getFullYear());
+        setEndMonth(remote.endMonth ?? today.getMonth());
+        setActiveScenarioId(remote.activeScenarioId ?? "patternA");
+        setSavedAt(remote.savedAt ?? null);
+      }
+      setSyncing(false);
+    })();
+  },[]);
 
   const saveTimer = useRef(null);
   useEffect(()=>{
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(()=>{
-      saveState({products,activeId,startYear,startMonth,endYear,endMonth,activeScenarioId});
+      const data = {products,activeId,startYear,startMonth,endYear,endMonth,activeScenarioId};
+      saveState(data);
+      saveToSupabase(data);
       setSavedAt(new Date().toISOString());
     },900);
     return ()=>clearTimeout(saveTimer.current);
@@ -1977,7 +2031,7 @@ export default function App() {
           📊 全体サマリー
         </button>
         <button className="tab-add" onClick={()=>setShowAddProduct(true)}>＋</button>
-        {savedAt&&<div className="save-badge">💾 {new Date(savedAt).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})} 保存済</div>}
+        {syncing&&<div className="save-badge" style={{background:"rgba(100,180,255,0.2)"}}>🔄 同期中...</div>}{!syncing&&savedAt&&<div className="save-badge">☁️ {new Date(savedAt).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"})} 同期済</div>}
       </div>
 
       <div className="main">
