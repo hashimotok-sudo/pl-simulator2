@@ -1401,20 +1401,70 @@ function ProductTab({product, monthsInRange, activeScenarioId, showCompare, onCh
                 </div>
                 {breakdown.length === 0
                   ? <div style={{fontSize:11,color:"rgba(255,255,255,0.3)"}}>内訳未登録</div>
-                  : breakdown.map(item=>(
-                    <div key={item.id} style={{display:"flex",alignItems:"center",gap:5,marginBottom:5}}>
-                      <input className="inp" value={item.itemName}
-                        onChange={e=>updBreakdownItem(s.id,item.id,"itemName",e.target.value)}
-                        placeholder="商品名（例:鰻の蒲焼き）"
-                        style={{flex:1,fontSize:12,padding:"4px 7px"}}/>
-                      <input className="inp sm" type="text" value={fmtNum(item.qty)}
-                        onChange={e=>updBreakdownItem(s.id,item.id,"qty",Number(String(e.target.value).replace(/,/g,"")))}
-                        style={{width:48,fontSize:12,padding:"4px 6px"}}/>
-                      <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>尾/個</span>
-                      <button className="btn btn-d" style={{padding:"3px 7px",fontSize:11}}
-                        onClick={()=>delBreakdownItem(s.id,item.id)}>✕</button>
+                  : breakdown.map(item=>{
+                    const isPercent = item.costIsPercent !== false;
+                    const costAmt = Number(item.costAmount||0);
+                    const costRate = Number(item.costRate||0);
+                    // 販売価格目安を計算
+                    let suggestedPrice = null;
+                    if(isPercent && costRate > 0 && costAmt > 0){
+                      suggestedPrice = Math.round(costAmt / (costRate/100));
+                    } else if(!isPercent && costAmt > 0 && costRate > 0){
+                      suggestedPrice = Math.round(costAmt / (costRate/100));
+                    }
+                    // ¥モードの場合: 原価額÷原価率=販売価格
+                    // %モードの場合: 原価額÷原価率%=販売価格
+                    const calcSuggest = () => {
+                      if(isPercent){
+                        // %モード: 原価額入力 + 原価率% → 販売価格
+                        if(costAmt > 0 && costRate > 0) return Math.round(costAmt/(costRate/100));
+                      } else {
+                        // ¥モード: 原価額 + 目標原価率% → 販売価格
+                        if(costAmt > 0 && costRate > 0) return Math.round(costAmt/(costRate/100));
+                      }
+                      return null;
+                    };
+                    const suggest = calcSuggest();
+                    return (
+                    <div key={item.id} style={{marginBottom:8,padding:"8px 10px",background:"rgba(255,255,255,0.04)",borderRadius:8,border:"1px solid rgba(255,255,255,0.08)"}}>
+                      {/* 商品名・数量・削除 */}
+                      <div style={{display:"flex",alignItems:"center",gap:5,marginBottom:6}}>
+                        <input className="inp" value={item.itemName}
+                          onChange={e=>updBreakdownItem(s.id,item.id,"itemName",e.target.value)}
+                          placeholder="商品名（例:鰻の蒲焼き）"
+                          style={{flex:1,fontSize:12,padding:"4px 7px"}}/>
+                        <input className="inp sm" type="text" value={fmtNum(item.qty)}
+                          onChange={e=>updBreakdownItem(s.id,item.id,"qty",Number(String(e.target.value).replace(/,/g,"")))}
+                          style={{width:48,fontSize:12,padding:"4px 6px"}} placeholder="数量"/>
+                        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>尾/個</span>
+                        <button className="btn btn-d" style={{padding:"3px 7px",fontSize:11}}
+                          onClick={()=>delBreakdownItem(s.id,item.id)}>✕</button>
+                      </div>
+                      {/* 原価入力 */}
+                      <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>原価:</span>
+                        <input className="inp sm" type="text" value={fmtNum(item.costAmount||"")}
+                          onChange={e=>updBreakdownItem(s.id,item.id,"costAmount",String(e.target.value).replace(/,/g,""))}
+                          placeholder="原価額"
+                          style={{width:72,fontSize:12,padding:"4px 6px"}}/>
+                        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>円</span>
+                        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)",marginLeft:4}}>目標原価率:</span>
+                        <input className="inp sm" type="number" step="0.1" value={item.costRate||""}
+                          onChange={e=>updBreakdownItem(s.id,item.id,"costRate",e.target.value)}
+                          placeholder="例:30"
+                          style={{width:52,fontSize:12,padding:"4px 6px"}}/>
+                        <span style={{fontSize:11,color:"rgba(255,255,255,0.4)"}}>%</span>
+                      </div>
+                      {/* 販売価格目安 */}
+                      {suggest && (
+                        <div style={{marginTop:4,fontSize:11,color:"rgba(255,200,100,0.6)"}}>
+                          販売価格目安: <span style={{fontWeight:600}}>¥{suggest.toLocaleString("ja-JP")}</span>
+                          <span style={{marginLeft:4,opacity:0.6}}>(原価{fmtNum(item.costAmount)}円 ÷ {item.costRate}%)</span>
+                        </div>
+                      )}
                     </div>
-                  ))
+                    );
+                  })
                 }
                 {breakdown.length > 0 && (
                   <div style={{marginTop:6,paddingTop:6,borderTop:"1px solid rgba(255,255,255,0.08)",fontSize:12,lineHeight:1.7}}>
@@ -1483,8 +1533,6 @@ function ProductTab({product, monthsInRange, activeScenarioId, showCompare, onCh
           <thead>
             <tr>
               <th>セット名</th>
-              <th>原価入力方式</th>
-              <th>原価率 / 原価額（1個）</th>
               <th>予測 原価合計</th>
               <th>実績 原価合計</th>
               <th>予測 粗利</th>
@@ -1507,37 +1555,6 @@ function ProductTab({product, monthsInRange, activeScenarioId, showCompare, onCh
               return (
                 <tr key={s.id}>
                   <td style={{color:"rgba(255,255,255,0.8)",fontWeight:600}}>{s.name}</td>
-                  <td>
-                    <button className={`pct-toggle ${sc.isPercent?"on":"off"}`}
-                      onClick={()=>updSetCost(s.id,"isPercent",!sc.isPercent)}
-                      style={{minWidth:36}}>
-                      {sc.isPercent ? "%" : "¥"}
-                    </button>
-                  </td>
-                  <td>
-                    {sc.isPercent ? (
-                      <span style={{display:"flex",alignItems:"center",gap:4}}>
-                        <input className="inp sm" type="number" step="0.1"
-                          value={Math.round(sc.rate*1000)/10}
-                          onChange={e=>updSetCost(s.id,"rate",Number(e.target.value)/100)}
-                          style={{width:72}}/>
-                        <span style={{fontSize:12,color:"#f8d060"}}>%</span>
-                        <span style={{fontSize:11,color:"rgba(255,255,255,0.3)",marginLeft:2}}>
-                          ({fmt(price>0?price*sc.rate:0)}/個)
-                        </span>
-                      </span>
-                    ) : (
-                      <span style={{display:"flex",alignItems:"center",gap:4}}>
-                        <input className="inp sm" type="text"
-                          value={fmtNum(sc.amount)}
-                          onChange={e=>updSetCost(s.id,"amount",String(e.target.value).replace(/,/g,""))}
-                          style={{width:92}}/>
-                        <span style={{fontSize:11,color:"rgba(255,255,255,0.3)"}}>
-                          ({dispRate}%)
-                        </span>
-                      </span>
-                    )}
-                  </td>
                   <td style={{color:"#7ec8f8",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(fCogs)}</td>
                   <td style={{color:"#7ef880",fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(aCogs)}</td>
                   <td style={{color:fGp>=0?"#a0e8c8":"#f87870",fontWeight:700,fontVariantNumeric:"tabular-nums"}}>{fmt(fGp)}</td>
